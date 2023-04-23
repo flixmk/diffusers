@@ -479,7 +479,8 @@ def main():
 
     wandb.login()
     if accelerator.is_main_process:
-        wandb.init(project="foundation_model")
+        run = wandb.init(project="foundation_model")
+        run.name = f"t2i_{args.output_dir}"
 
     # Load scheduler, tokenizer and models.
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
@@ -1142,6 +1143,94 @@ def main():
             
 
     accelerator.end_training()
+
+
+        ## upload to huggingface
+    from subprocess import call
+    if os.path.exists(args.output_dir+'/unet/diffusion_pytorch_model.bin'):
+        call('python /workspace/diffusers/scripts/convertosdv2.py --fp16 '+args.output_dir+' '+args.output_dir+'/'+args.output_dir+'.ckpt', shell=True)
+    else:
+        print("Something went wrong")
+
+    # readme
+    readme_text = f'''---
+    license: creativeml-openrail-m
+    tags:
+    - text-to-image
+    - stable-diffusion
+    ---
+    ###
+
+    '''
+    #Save the readme to a file
+    readme_file = open("README.md", "w")
+    readme_file.write(readme_text)
+    readme_file.close()
+
+    from huggingface_hub import HfApi, CommitOperationAdd
+
+    api = HfApi()
+    hub_token = args.hub_token
+    your_username = api.whoami(token=hub_token)["name"]
+    repo_id = f"{your_username}/{args.output_dir}"
+
+    operations = [
+      CommitOperationAdd(path_in_repo="README.md", path_or_fileobj="README.md"),
+      CommitOperationAdd(path_in_repo=f"{args.output_dir}.ckpt",path_or_fileobj=f"{args.output_dir}/{args.output_dir}.ckpt")
+
+    ]
+    create_repo(repo_id,private=True, token=hub_token)
+    
+    api.create_commit(
+      repo_id=repo_id,
+      operations=operations,
+      commit_message=f"Upload the concept embeds and token",
+      token=hub_token
+    )
+    print("Created commit")
+    api.upload_folder(
+      folder_path=args.output_dir+"/scheduler",
+      path_in_repo="scheduler",
+      repo_id=repo_id,
+      token=hub_token
+    )
+    print("Uploaded: ", "scheduler")
+    api.upload_folder(
+      folder_path=args.output_dir+"/text_encoder",
+      path_in_repo="text_encoder",
+      repo_id=repo_id,
+      token=hub_token
+    )
+    print("Uploaded: ", "text_encoder")
+    api.upload_folder(
+      folder_path=args.output_dir+"/tokenizer",
+      path_in_repo="tokenizer",
+      repo_id=repo_id,
+      token=hub_token
+    )
+    print("Uploaded: ", "tokenizer")
+    api.upload_folder(
+      folder_path=args.output_dir+"/unet",
+      path_in_repo="unet",
+      repo_id=repo_id,
+      token=hub_token
+    )
+    print("Uploaded: ", "unet")
+    api.upload_folder(
+      folder_path=args.output_dir+"/vae",
+      path_in_repo="vae",
+      repo_id=repo_id,
+      token=hub_token
+    )
+    print("Uploaded: ", "vae")
+    api.upload_file(
+      path_or_fileobj=args.output_dir+"/model_index.json",
+      path_in_repo="model_index.json",
+      repo_id=repo_id,
+      token=hub_token,
+    )
+    print("Uploaded: ", "model_index.json")
+
 
 
 if __name__ == "__main__":
