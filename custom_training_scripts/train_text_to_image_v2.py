@@ -477,6 +477,10 @@ def main():
                 repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
             ).repo_id
 
+    wandb.login()
+    if accelerator.is_main_process:
+        wandb.init(project="foundation_model")
+
     # Load scheduler, tokenizer and models.
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
     tokenizer = CLIPTokenizer.from_pretrained(
@@ -732,8 +736,8 @@ def main():
     )
 
     # Prepare everything with our `accelerator`.
-    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler
+    unet, optimizer, train_dataloader, val_dataloader, lr_scheduler = accelerator.prepare(
+        unet, optimizer, train_dataloader, val_dataloader, lr_scheduler
     )
 
     if args.use_ema:
@@ -805,13 +809,16 @@ def main():
 
 
     from PIL import Image
+    import glob
     # create folder val_images if not exists
     if not os.path.exists("./val_images"):
         os.mkdir("./val_images")
 
-    for i in tqdm(range(len(val_dataset))):
-        img = Image.fromarray(np.array(val_dataset[i]["image"]))
-        img.save(f"./val_images/{i}.png")
+    files = glob.glob("./val_images/*")
+    if len(files) < len(val_dataset):
+        for i in tqdm(range(len(val_dataset))):
+            img = Image.fromarray(np.array(val_dataset[i]["image"]))
+            img.save(f"./val_images/{i}.png")
 
     try:
         fid.make_custom_stats("val", fdir="./val_images/")
@@ -828,6 +835,8 @@ def main():
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
         train_loss = 0.0
+        eval_this_step = True
+        gradient_accumulation_steps_for_eval = 0
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
@@ -935,7 +944,7 @@ def main():
             if global_step % args.eval_every_n_steps == 0 or global_step % args.gen_images_every_n_steps == 0 or global_step == 1:
                 # to make gradient accumulation work (ugly)
                 if eval_this_step:
-                    if global_step % args.eval_every_n_steps == 0:
+                    if global_step % args.eval_every_n_steps == 0 or global_step == 1:
                         # accelerator.wait_for_everyone()
                         loss_avg_eval = AverageMeter()
                         unet.eval()
