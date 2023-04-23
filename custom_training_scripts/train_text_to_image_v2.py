@@ -221,6 +221,9 @@ def parse_args():
     parser.add_argument(
         "--train_batch_size", type=int, default=16, help="Batch size (per device) for the training dataloader."
     )
+    parser.add_argument(
+        "--val_batch_size", type=int, default=8, help="Batch size (per device) for the training dataloader."
+    )
     parser.add_argument("--num_train_epochs", type=int, default=100)
     parser.add_argument(
         "--max_train_steps",
@@ -916,7 +919,7 @@ def main():
                 if accelerator.is_main_process:
                     # logger.info("logging loss")
                     wandb.log({"avg_train_loss": loss_avg.avg.item()}, step=global_step)
-                    wandb.log({"train_loss": loss_avg.avg.item()}, step=global_step)
+                    wandb.log({"train_loss": train_loss}, step=global_step)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
@@ -1013,7 +1016,7 @@ def main():
 
                             if accelerator.is_main_process:        
                                 wandb.log({"avg_val_loss": loss_avg_eval.avg.item()}, step=global_step)
-                                wandb.log({"val_loss": loss_avg_eval.avg.item()}, step=global_step)
+                                wandb.log({"val_loss": val_loss}, step=global_step)
 
                         unet.train()
 
