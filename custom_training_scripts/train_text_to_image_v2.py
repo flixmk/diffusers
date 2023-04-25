@@ -47,6 +47,7 @@ from diffusers.utils.import_utils import is_xformers_available
 from oct_diffusion.eval.evaluate import evaluate_using_filepaths
 from oct_diffusion.model.DiffusionModel import SDM
 
+import timm
 from cleanfid import fid
 
 
@@ -722,7 +723,7 @@ def main():
         val_dataset,
         shuffle=True,
         collate_fn=collate_fn,
-        batch_size=1,
+        batch_size=args.val_batch_size,
         num_workers=args.dataloader_num_workers,
     )
     # Scheduler and math around the number of training steps.
@@ -829,6 +830,8 @@ def main():
     except:
         print("Stats already exist")
 
+
+    call('wget -q https://huggingface.co/flix-k/sd_dependencies/resolve/main/finetuned_best.pt', shell=True)
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
@@ -1078,6 +1081,16 @@ def main():
                             score = fid.compute_fid("./synth_data/ALL/", dataset_name="val",
                                     mode="clean", dataset_split="custom")
                             wandb.log({"FID": score}, step=global_step)
+
+                            model_inc = timm.create_model('inception_v3', pretrained=True, num_classes=4).to("cuda")
+                            model_inc.load_state_dict(torch.load("./finetuned_best.pt"))
+                            model_inc.eval()
+                            model_inc = torch.nn.Sequential(*(list(model_inc.children())[:-1]))
+
+                            score = fid.compute_fid("./synth_data/ALL/", dataset_name="val",
+                                    mode="clean", dataset_split="custom",
+                                    custom_feat_extractor=model_inc,)
+                            wandb.log({"FID-Trained": score}, step=global_step)
                                     
                             num_images_to_wandb = 10
                             classes = ["NORMAL", "DRUSEN", "DME", "CNV"]
