@@ -46,6 +46,7 @@ from diffusers.utils.import_utils import is_xformers_available
 
 from oct_diffusion.eval.evaluate import evaluate_using_filepaths
 from oct_diffusion.model.DiffusionModel import SDM
+from oct_diffusion.eval.cas import CAS
 
 import timm
 from cleanfid import fid
@@ -823,14 +824,39 @@ def main():
     if len(files) < len(val_dataset):
         for i in tqdm(range(len(val_dataset))):
             img = Image.fromarray(np.array(val_dataset[i]["image"]))
-            img.save(f"./val_images/{i}.png")
+            image_name = val_dataset[i]["caption"]
+            img.save(f"./val_images/{image_name}-{i}.png")
 
     try:
         fid.make_custom_stats("val", fdir="./val_images/")
     except:
         print("Stats already exist")
 
+    num_classifier_train_images = 100
+    classes = ["NORMAL", "DME", "DRUSEN", "CNV"]
 
+    files = glob.glob("./classifier_train_images/*")
+    if len(files) < len(num_classifier_train_images * len(classes)):
+        for c in classes:
+            counter = 0
+            for i in range(len(files)):
+                if c in files:
+                    img = Image.fromarray(np.array(train_dataset[i]["image"]))
+                    image_name = train_dataset[i]["caption"]
+                    img.save(f"./classifier_train_images/{image_name}-{i}.png")
+                    counter += 1
+                if counter >= num_classifier_train_images:
+                    break
+            print(f"Saved {counter} images for class {c}")
+
+
+    path_to_real = "./classifier_train_images/"
+    val__data_dir = "./val_images/"
+    cas = CAS(path_to_real, val_data_dir=val__data_dir, 
+          classes=['CNV', 'DME', 'DRUSEN', 'NORMAL'], resolution=args.resolution, 
+          num_runs=3, num_epochs=25)
+
+    from subprocess import call
     call('wget -q https://huggingface.co/flix-k/sd_dependencies/resolve/main/finetuned_best.pt', shell=True)
 
     # Only show the progress bar once on each machine.
@@ -1091,6 +1117,10 @@ def main():
                                     mode="clean", dataset_split="custom",
                                     custom_feat_extractor=model_inc,)
                             wandb.log({"FID-Trained": score}, step=global_step)
+
+                            cas_score = cas(path_to_fake="./synth_data/ALL/")
+                            wandb.log({"simple-CAS@25epochs": cas_score}, step=global_step)
+                            
                                     
                             num_images_to_wandb = 10
                             classes = ["NORMAL", "DRUSEN", "DME", "CNV"]

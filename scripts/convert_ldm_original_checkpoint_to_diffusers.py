@@ -338,6 +338,20 @@ if __name__ == "__main__":
 
     checkpoint = torch.load(args.checkpoint_path)
 
+    import yaml
+    import json
+
+    with open(f'{args.config_file}', 'r') as file:
+        configuration = yaml.safe_load(file)
+
+    with open(f'{args.config_file}'.replace("yaml", "json"), 'w') as json_file:
+        json.dump(configuration, json_file)
+        
+    args.config_file = f'{args.config_file}'.replace("yaml", "json")
+    # output = json.dumps(json.load(open('config.json')), indent=2)
+    # print(output)
+    
+
     with open(args.config_file) as f:
         config = json.loads(f.read())
 
