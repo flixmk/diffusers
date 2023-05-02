@@ -221,6 +221,18 @@ def parse_args():
         help="whether to randomly flip images horizontally",
     )
     parser.add_argument(
+        "--use_custom_vae",
+        action="store_true",
+        default=False,
+        help="whether to use a custom vae",
+    )
+    parser.add_argument(
+        "--use_pretrained_unet",
+        action="store_true",
+        default=False,
+        help="whether to use the pretrained unet",
+    )
+    parser.add_argument(
         "--train_batch_size", type=int, default=16, help="Batch size (per device) for the training dataloader."
     )
     parser.add_argument(
@@ -495,10 +507,99 @@ def main():
     text_encoder = CLIPTextModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
     )
-    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision)
-    unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.non_ema_revision
-    )
+    if args.use_custom_vae:
+        print("Using custom VAE")
+        from diffusers.pipelines.stable_diffusion.convert_from_ckpt import create_vae_diffusers_config_custom, convert_ldm_vae_checkpoint_custom
+        from omegaconf import OmegaConf
+        def get_diffusers_autoencoder(checkpoint_path, config_path, img_size=256):
+            original_config = OmegaConf.load(config_path)
+            vae_config = create_vae_diffusers_config_custom(original_config, image_size=256)
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            checkpoint = torch.load(checkpoint_path, map_location=device)
+            checkpoint = checkpoint["state_dict"]
+            converted_vae_checkpoint = convert_ldm_vae_checkpoint_custom(checkpoint, vae_config)
+
+            key_list = list(converted_vae_checkpoint.keys())
+
+
+            # delete all keys that contain ".down." in the name
+            for key in key_list:
+                if ".down." in key:
+                    print(key)
+                    del converted_vae_checkpoint[key]
+
+            # delete all keys that contain ".up." in the name
+            for key in key_list:
+                if ".up." in key:
+                    print(key)
+                    del converted_vae_checkpoint[key]
+
+            if ".down." in key_list:
+                print("True")
+
+            # print(vae_config)
+            vae = AutoencoderKL(**vae_config)
+            # print(vae)
+            vae.load_state_dict(converted_vae_checkpoint)
+
+            return vae
+        vae = get_diffusers_autoencoder(checkpoint_path="/home/flix/Desktop/Masterthesis/code/ldm/latent-diffusion/models/first_stage_models/kl-f4/model.ckpt",
+                                        config_path="/home/flix/Desktop/Masterthesis/code/ldm/latent-diffusion/models/first_stage_models/kl-f4/config.yaml")
+    else:
+        vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision)
+
+    if args.use_pretrained_unet:
+        unet = UNet2DConditionModel.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="unet", revision=args.non_ema_revision
+        )
+    
+    else:
+        print("Creating new unet")
+        unet = UNet2DConditionModel(
+            in_channels=3,
+            out_channels=3,
+            act_fn="silu",
+            attention_head_dim=[
+                5,
+                10,
+                20,
+                20
+            ],
+            block_out_channels=[
+                320,
+                640,
+                1280,
+                1280
+            ],
+            center_input_sample=False,
+            cross_attention_dim=1024,
+            down_block_types=[
+                "CrossAttnDownBlock2D",
+                "CrossAttnDownBlock2D",
+                "CrossAttnDownBlock2D",
+                "DownBlock2D"
+            ],
+            downsample_padding=1,
+            dual_cross_attention=False,
+            flip_sin_to_cos=True,
+            freq_shift=0,
+            layers_per_block=2,
+            mid_block_scale_factor=1,
+            norm_eps=1e-05,
+            norm_num_groups=32,
+            num_class_embeds=None,
+            only_cross_attention=False,
+            sample_size=64,
+            up_block_types=[
+                "UpBlock2D",
+                "CrossAttnUpBlock2D",
+                "CrossAttnUpBlock2D",
+                "CrossAttnUpBlock2D"
+            ],
+            use_linear_projection=True
+        )
+
+
 
     # Freeze vae and text_encoder
     vae.requires_grad_(False)
@@ -825,36 +926,56 @@ def main():
         for i in tqdm(range(len(val_dataset))):
             img = Image.fromarray(np.array(val_dataset[i]["image"]))
             image_name = val_dataset[i]["caption"]
-            img.save(f"./val_images/{image_name}-{i}.png")
+            img.save(f"./val_images/{image_name}-{i}.jpg")
 
     try:
         fid.make_custom_stats("val", fdir="./val_images/")
     except:
         print("Stats already exist")
 
-    num_classifier_train_images = 100
-    classes = ["NORMAL", "DME", "DRUSEN", "CNV"]
-
-    files = glob.glob("./classifier_train_images/*")
-    if len(files) < len(num_classifier_train_images * len(classes)):
-        for c in classes:
-            counter = 0
-            for i in range(len(files)):
-                if c in files:
-                    img = Image.fromarray(np.array(train_dataset[i]["image"]))
-                    image_name = train_dataset[i]["caption"]
-                    img.save(f"./classifier_train_images/{image_name}-{i}.png")
-                    counter += 1
-                if counter >= num_classifier_train_images:
-                    break
-            print(f"Saved {counter} images for class {c}")
+    try:
+        fid.make_custom_stats("val", fdir="./val_images/")
+    except:
+        print("Stats already exist")
 
 
-    path_to_real = "./classifier_train_images/"
-    val__data_dir = "./val_images/"
-    cas = CAS(path_to_real, val_data_dir=val__data_dir, 
-          classes=['CNV', 'DME', 'DRUSEN', 'NORMAL'], resolution=args.resolution, 
-          num_runs=3, num_epochs=25)
+    # if not os.path.exists("./train_images"):
+    #     os.mkdir("./train_images")
+
+    # files = glob.glob("./train_images/*")
+    # if len(files) < len(train_dataset):
+    #     for i in tqdm(range(len(train_dataset))):
+    #         img = Image.fromarray(np.array(train_dataset[i]["image"]))
+    #         image_name = train_dataset[i]["caption"]
+    #         img.save(f"./train_images/{image_name}-{i}.jpg")
+
+    # num_classifier_train_images = 100
+    # classes = ["NORMAL", "DME", "DRUSEN", "CNV"]
+
+    # if not os.path.exists("./classifier_train_images"):
+    #     os.mkdir("./classifier_train_images")
+
+    # files = glob.glob("./classifier_train_images/*")
+
+    # for c in classes:
+    #     files = glob.glob(f"./classifier_train_images/{c}*")
+    #     print(f"Nr. of files found for class {c}", len(files))
+
+    #     files_to_save = files[:num_classifier_train_images]
+    #     for c, f in enumerate(files_to_save):
+    #         # shutil copy file to new folder
+    #         shutil.copy(f, f"./classifier_train_images/{os.path.basename(f)}")
+
+
+    # files = glob.glob("./classifier_train_images/*")
+    # print(f"Saved {len(files)} images for class {c}")
+
+
+    # path_to_real = "./classifier_train_images/"
+    # val__data_dir = "./val_images/"
+    # cas = CAS(path_to_real, val_data_dir=val__data_dir, 
+    #       classes=['CNV', 'DME', 'DRUSEN', 'NORMAL'], resolution=args.resolution, 
+    #       num_runs=3, num_epochs=25)
 
     from subprocess import call
     call('wget -q https://huggingface.co/flix-k/sd_dependencies/resolve/main/finetuned_best.pt', shell=True)
@@ -1113,13 +1234,12 @@ def main():
                             model_inc.eval()
                             model_inc = torch.nn.Sequential(*(list(model_inc.children())[:-1]))
 
-                            score = fid.compute_fid("./synth_data/ALL/", dataset_name="val",
-                                    mode="clean", dataset_split="custom",
-                                    custom_feat_extractor=model_inc,)
+                            score = fid.compute_fid("./synth_data/ALL/", "./real_data/ALL",
+                                    mode="clean", custom_feat_extractor=model_inc,)
                             wandb.log({"FID-Trained": score}, step=global_step)
 
-                            cas_score = cas(path_to_fake="./synth_data/ALL/")
-                            wandb.log({"simple-CAS@25epochs": cas_score}, step=global_step)
+                            # cas_score = cas(path_to_fake="./synth_data/ALL/")
+                            # wandb.log({"simple-CAS@25epochs": cas_score}, step=global_step)
                             
                                     
                             num_images_to_wandb = 10
