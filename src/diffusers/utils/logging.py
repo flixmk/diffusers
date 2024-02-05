@@ -28,7 +28,7 @@ from logging import (
     WARN,  # NOQA
     WARNING,  # NOQA
 )
-from typing import Optional
+from typing import Dict, Optional
 
 from tqdm import auto as tqdm_lib
 
@@ -49,7 +49,7 @@ _default_log_level = logging.WARNING
 _tqdm_active = True
 
 
-def _get_default_logging_level():
+def _get_default_logging_level() -> int:
     """
     If DIFFUSERS_VERBOSITY env var is set to one of the valid choices return that as the new default level. If it is
     not - fall back to `_default_log_level`
@@ -104,7 +104,7 @@ def _reset_library_root_logger() -> None:
         _default_handler = None
 
 
-def get_log_levels_dict():
+def get_log_levels_dict() -> Dict[str, int]:
     return log_levels
 
 
@@ -124,22 +124,19 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
 
 def get_verbosity() -> int:
     """
-    Return the current level for the 🤗 Diffusers' root logger as an int.
+    Return the current level for the 🤗 Diffusers' root logger as an `int`.
 
     Returns:
-        `int`: The logging level.
+        `int`:
+            Logging level integers which can be one of:
 
-    <Tip>
+            - `50`: `diffusers.logging.CRITICAL` or `diffusers.logging.FATAL`
+            - `40`: `diffusers.logging.ERROR`
+            - `30`: `diffusers.logging.WARNING` or `diffusers.logging.WARN`
+            - `20`: `diffusers.logging.INFO`
+            - `10`: `diffusers.logging.DEBUG`
 
-    🤗 Diffusers has following logging levels:
-
-    - 50: `diffusers.logging.CRITICAL` or `diffusers.logging.FATAL`
-    - 40: `diffusers.logging.ERROR`
-    - 30: `diffusers.logging.WARNING` or `diffusers.logging.WARN`
-    - 20: `diffusers.logging.INFO`
-    - 10: `diffusers.logging.DEBUG`
-
-    </Tip>"""
+    """
 
     _configure_library_root_logger()
     return _get_library_root_logger().getEffectiveLevel()
@@ -151,7 +148,7 @@ def set_verbosity(verbosity: int) -> None:
 
     Args:
         verbosity (`int`):
-            Logging level, e.g., one of:
+            Logging level which can be one of:
 
             - `diffusers.logging.CRITICAL` or `diffusers.logging.FATAL`
             - `diffusers.logging.ERROR`
@@ -164,28 +161,28 @@ def set_verbosity(verbosity: int) -> None:
     _get_library_root_logger().setLevel(verbosity)
 
 
-def set_verbosity_info():
+def set_verbosity_info() -> None:
     """Set the verbosity to the `INFO` level."""
     return set_verbosity(INFO)
 
 
-def set_verbosity_warning():
+def set_verbosity_warning() -> None:
     """Set the verbosity to the `WARNING` level."""
     return set_verbosity(WARNING)
 
 
-def set_verbosity_debug():
+def set_verbosity_debug() -> None:
     """Set the verbosity to the `DEBUG` level."""
     return set_verbosity(DEBUG)
 
 
-def set_verbosity_error():
+def set_verbosity_error() -> None:
     """Set the verbosity to the `ERROR` level."""
     return set_verbosity(ERROR)
 
 
 def disable_default_handler() -> None:
-    """Disable the default handler of the HuggingFace Diffusers' root logger."""
+    """Disable the default handler of the 🤗 Diffusers' root logger."""
 
     _configure_library_root_logger()
 
@@ -194,7 +191,7 @@ def disable_default_handler() -> None:
 
 
 def enable_default_handler() -> None:
-    """Enable the default handler of the HuggingFace Diffusers' root logger."""
+    """Enable the default handler of the 🤗 Diffusers' root logger."""
 
     _configure_library_root_logger()
 
@@ -216,7 +213,7 @@ def remove_handler(handler: logging.Handler) -> None:
 
     _configure_library_root_logger()
 
-    assert handler is not None and handler not in _get_library_root_logger().handlers
+    assert handler is not None and handler in _get_library_root_logger().handlers
     _get_library_root_logger().removeHandler(handler)
 
 
@@ -241,9 +238,9 @@ def enable_propagation() -> None:
 
 def enable_explicit_format() -> None:
     """
-    Enable explicit formatting for every HuggingFace Diffusers' logger. The explicit formatter is as follows:
+    Enable explicit formatting for every 🤗 Diffusers' logger. The explicit formatter is as follows:
     ```
-        [LEVELNAME|FILENAME|LINE NUMBER] TIME >> MESSAGE
+    [LEVELNAME|FILENAME|LINE NUMBER] TIME >> MESSAGE
     ```
     All handlers currently bound to the root logger are affected by this method.
     """
@@ -256,7 +253,7 @@ def enable_explicit_format() -> None:
 
 def reset_format() -> None:
     """
-    Resets the formatting for HuggingFace Diffusers' loggers.
+    Resets the formatting for 🤗 Diffusers' loggers.
 
     All handlers currently bound to the root logger are affected by this method.
     """
@@ -266,7 +263,7 @@ def reset_format() -> None:
         handler.setFormatter(None)
 
 
-def warning_advice(self, *args, **kwargs):
+def warning_advice(self, *args, **kwargs) -> None:
     """
     This method is identical to `logger.warning()`, but if env var DIFFUSERS_NO_ADVISORY_WARNINGS=1 is set, this
     warning will not be printed
@@ -330,13 +327,13 @@ def is_progress_bar_enabled() -> bool:
     return bool(_tqdm_active)
 
 
-def enable_progress_bar():
+def enable_progress_bar() -> None:
     """Enable tqdm progress bar."""
     global _tqdm_active
     _tqdm_active = True
 
 
-def disable_progress_bar():
+def disable_progress_bar() -> None:
     """Disable tqdm progress bar."""
     global _tqdm_active
     _tqdm_active = False

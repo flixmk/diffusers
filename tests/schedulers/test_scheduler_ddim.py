@@ -69,6 +69,14 @@ class DDIMSchedulerTest(SchedulerCommonTest):
         for clip_sample in [True, False]:
             self.check_over_configs(clip_sample=clip_sample)
 
+    def test_timestep_spacing(self):
+        for timestep_spacing in ["trailing", "leading"]:
+            self.check_over_configs(timestep_spacing=timestep_spacing)
+
+    def test_rescale_betas_zero_snr(self):
+        for rescale_betas_zero_snr in [True, False]:
+            self.check_over_configs(rescale_betas_zero_snr=rescale_betas_zero_snr)
+
     def test_thresholding(self):
         self.check_over_configs(thresholding=False)
         for threshold in [0.5, 1.0, 2.0]:
@@ -138,3 +146,31 @@ class DDIMSchedulerTest(SchedulerCommonTest):
 
         assert abs(result_sum.item() - 149.0784) < 1e-2
         assert abs(result_mean.item() - 0.1941) < 1e-3
+
+    def test_full_loop_with_noise(self):
+        scheduler_class = self.scheduler_classes[0]
+        scheduler_config = self.get_scheduler_config()
+        scheduler = scheduler_class(**scheduler_config)
+
+        num_inference_steps, eta = 10, 0.0
+        t_start = 8
+
+        model = self.dummy_model()
+        sample = self.dummy_sample_deter
+
+        scheduler.set_timesteps(num_inference_steps)
+
+        # add noise
+        noise = self.dummy_noise_deter
+        timesteps = scheduler.timesteps[t_start * scheduler.order :]
+        sample = scheduler.add_noise(sample, noise, timesteps[:1])
+
+        for t in timesteps:
+            residual = model(sample, t)
+            sample = scheduler.step(residual, t, sample, eta).prev_sample
+
+        result_sum = torch.sum(torch.abs(sample))
+        result_mean = torch.mean(torch.abs(sample))
+
+        assert abs(result_sum.item() - 354.5418) < 1e-2, f" expected result sum 218.4379, but get {result_sum}"
+        assert abs(result_mean.item() - 0.4616) < 1e-3, f" expected result mean 0.2844, but get {result_mean}"

@@ -2,24 +2,19 @@ import glob
 import os
 from typing import Dict, List, Union
 
+import safetensors.torch
 import torch
-
-from diffusers.utils import is_safetensors_available
-
-
-if is_safetensors_available():
-    import safetensors.torch
-
 from huggingface_hub import snapshot_download
+from huggingface_hub.utils import validate_hf_hub_args
 
 from diffusers import DiffusionPipeline, __version__
 from diffusers.schedulers.scheduling_utils import SCHEDULER_CONFIG_NAME
-from diffusers.utils import CONFIG_NAME, DIFFUSERS_CACHE, ONNX_WEIGHTS_NAME, WEIGHTS_NAME
+from diffusers.utils import CONFIG_NAME, ONNX_WEIGHTS_NAME, WEIGHTS_NAME
 
 
 class CheckpointMergerPipeline(DiffusionPipeline):
     """
-    A class that that supports merging diffusion models based on the discussion here:
+    A class that supports merging diffusion models based on the discussion here:
     https://github.com/huggingface/diffusers/issues/877
 
     Example usage:-
@@ -63,6 +58,7 @@ class CheckpointMergerPipeline(DiffusionPipeline):
         return (temp_dict, meta_keys)
 
     @torch.no_grad()
+    @validate_hf_hub_args
     def merge(self, pretrained_model_name_or_path_list: List[Union[str, os.PathLike]], **kwargs):
         """
         Returns a new pipeline object of the class 'DiffusionPipeline' with the merged checkpoints(weights) of the models passed
@@ -75,7 +71,7 @@ class CheckpointMergerPipeline(DiffusionPipeline):
             **kwargs:
                 Supports all the default DiffusionPipeline.get_config_dict kwargs viz..
 
-                cache_dir, resume_download, force_download, proxies, local_files_only, use_auth_token, revision, torch_dtype, device_map.
+                cache_dir, resume_download, force_download, proxies, local_files_only, token, revision, torch_dtype, device_map.
 
                 alpha - The interpolation parameter. Ranges from 0 to 1.  It affects the ratio in which the checkpoints are merged. A 0.8 alpha
                     would mean that the first model checkpoints would affect the final result far less than an alpha of 0.2
@@ -87,12 +83,12 @@ class CheckpointMergerPipeline(DiffusionPipeline):
 
         """
         # Default kwargs from DiffusionPipeline
-        cache_dir = kwargs.pop("cache_dir", DIFFUSERS_CACHE)
+        cache_dir = kwargs.pop("cache_dir", None)
         resume_download = kwargs.pop("resume_download", False)
         force_download = kwargs.pop("force_download", False)
         proxies = kwargs.pop("proxies", None)
         local_files_only = kwargs.pop("local_files_only", False)
-        use_auth_token = kwargs.pop("use_auth_token", None)
+        token = kwargs.pop("token", None)
         revision = kwargs.pop("revision", None)
         torch_dtype = kwargs.pop("torch_dtype", None)
         device_map = kwargs.pop("device_map", None)
@@ -129,7 +125,7 @@ class CheckpointMergerPipeline(DiffusionPipeline):
                 force_download=force_download,
                 proxies=proxies,
                 local_files_only=local_files_only,
-                use_auth_token=use_auth_token,
+                token=token,
                 revision=revision,
             )
             config_dicts.append(config_dict)
@@ -165,7 +161,7 @@ class CheckpointMergerPipeline(DiffusionPipeline):
                     resume_download=resume_download,
                     proxies=proxies,
                     local_files_only=local_files_only,
-                    use_auth_token=use_auth_token,
+                    token=token,
                     revision=revision,
                     allow_patterns=allow_patterns,
                     user_agent=user_agent,
@@ -229,14 +225,14 @@ class CheckpointMergerPipeline(DiffusionPipeline):
                     update_theta_0 = getattr(module, "load_state_dict")
                     theta_1 = (
                         safetensors.torch.load_file(checkpoint_path_1)
-                        if (is_safetensors_available() and checkpoint_path_1.endswith(".safetensors"))
+                        if (checkpoint_path_1.endswith(".safetensors"))
                         else torch.load(checkpoint_path_1, map_location="cpu")
                     )
                     theta_2 = None
                     if checkpoint_path_2:
                         theta_2 = (
                             safetensors.torch.load_file(checkpoint_path_2)
-                            if (is_safetensors_available() and checkpoint_path_2.endswith(".safetensors"))
+                            if (checkpoint_path_2.endswith(".safetensors"))
                             else torch.load(checkpoint_path_2, map_location="cpu")
                         )
 

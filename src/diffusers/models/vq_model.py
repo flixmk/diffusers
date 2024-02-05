@@ -19,8 +19,9 @@ import torch.nn as nn
 
 from ..configuration_utils import ConfigMixin, register_to_config
 from ..utils import BaseOutput
+from ..utils.accelerate_utils import apply_forward_hook
+from .autoencoders.vae import Decoder, DecoderOutput, Encoder, VectorQuantizer
 from .modeling_utils import ModelMixin
-from .vae import Decoder, DecoderOutput, Encoder, VectorQuantizer
 
 
 @dataclass
@@ -30,32 +31,34 @@ class VQEncoderOutput(BaseOutput):
 
     Args:
         latents (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)`):
-            Encoded output sample of the model. Output of the last layer of the model.
+            The encoded output sample from the last layer of the model.
     """
 
     latents: torch.FloatTensor
 
 
 class VQModel(ModelMixin, ConfigMixin):
-    r"""VQ-VAE model from the paper Neural Discrete Representation Learning by Aaron van den Oord, Oriol Vinyals and Koray
-    Kavukcuoglu.
+    r"""
+    A VQ-VAE model for decoding latent representations.
 
-    This model inherits from [`ModelMixin`]. Check the superclass documentation for the generic methods the library
-    implements for all the model (such as downloading or saving, etc.)
+    This model inherits from [`ModelMixin`]. Check the superclass documentation for it's generic methods implemented
+    for all models (such as downloading or saving).
 
     Parameters:
         in_channels (int, *optional*, defaults to 3): Number of channels in the input image.
         out_channels (int,  *optional*, defaults to 3): Number of channels in the output.
-        down_block_types (`Tuple[str]`, *optional*, defaults to :
-            obj:`("DownEncoderBlock2D",)`): Tuple of downsample block types.
-        up_block_types (`Tuple[str]`, *optional*, defaults to :
-            obj:`("UpDecoderBlock2D",)`): Tuple of upsample block types.
-        block_out_channels (`Tuple[int]`, *optional*, defaults to :
-            obj:`(64,)`): Tuple of block output channels.
+        down_block_types (`Tuple[str]`, *optional*, defaults to `("DownEncoderBlock2D",)`):
+            Tuple of downsample block types.
+        up_block_types (`Tuple[str]`, *optional*, defaults to `("UpDecoderBlock2D",)`):
+            Tuple of upsample block types.
+        block_out_channels (`Tuple[int]`, *optional*, defaults to `(64,)`):
+            Tuple of block output channels.
+        layers_per_block (`int`, *optional*, defaults to `1`): Number of layers per block.
         act_fn (`str`, *optional*, defaults to `"silu"`): The activation function to use.
         latent_channels (`int`, *optional*, defaults to `3`): Number of channels in the latent space.
-        sample_size (`int`, *optional*, defaults to `32`): TODO
+        sample_size (`int`, *optional*, defaults to `32`): Sample input size.
         num_vq_embeddings (`int`, *optional*, defaults to `256`): Number of codebook vectors in the VQ-VAE.
+        norm_num_groups (`int`, *optional*, defaults to `32`): Number of groups for normalization layers.
         vq_embed_dim (`int`, *optional*): Hidden dim of codebook vectors in the VQ-VAE.
         scaling_factor (`float`, *optional*, defaults to `0.18215`):
             The component-wise standard deviation of the trained latent space computed using the first batch of the
@@ -64,6 +67,8 @@ class VQModel(ModelMixin, ConfigMixin):
             diffusion model. When decoding, the latents are scaled back to the original scale with the formula: `z = 1
             / scaling_factor * z`. For more details, refer to sections 4.3.2 and D.1 of the [High-Resolution Image
             Synthesis with Latent Diffusion Models](https://arxiv.org/abs/2112.10752) paper.
+        norm_type (`str`, *optional*, defaults to `"group"`):
+            Type of normalization layer to use. Can be one of `"group"` or `"spatial"`.
     """
 
     @register_to_config
@@ -71,9 +76,9 @@ class VQModel(ModelMixin, ConfigMixin):
         self,
         in_channels: int = 3,
         out_channels: int = 3,
-        down_block_types: Tuple[str] = ("DownEncoderBlock2D",),
-        up_block_types: Tuple[str] = ("UpDecoderBlock2D",),
-        block_out_channels: Tuple[int] = (64,),
+        down_block_types: Tuple[str, ...] = ("DownEncoderBlock2D",),
+        up_block_types: Tuple[str, ...] = ("UpDecoderBlock2D",),
+        block_out_channels: Tuple[int, ...] = (64,),
         layers_per_block: int = 1,
         act_fn: str = "silu",
         latent_channels: int = 3,
@@ -82,6 +87,10 @@ class VQModel(ModelMixin, ConfigMixin):
         norm_num_groups: int = 32,
         vq_embed_dim: Optional[int] = None,
         scaling_factor: float = 0.18215,
+        norm_type: str = "group",  # group, spatial
+        mid_block_add_attention=True,
+        lookup_from_codebook=False,
+        force_upcast=False,
     ):
         super().__init__()
 
@@ -95,6 +104,7 @@ class VQModel(ModelMixin, ConfigMixin):
             act_fn=act_fn,
             norm_num_groups=norm_num_groups,
             double_z=False,
+            mid_block_add_attention=mid_block_add_attention,
         )
 
         vq_embed_dim = vq_embed_dim if vq_embed_dim is not None else latent_channels
@@ -112,8 +122,11 @@ class VQModel(ModelMixin, ConfigMixin):
             layers_per_block=layers_per_block,
             act_fn=act_fn,
             norm_num_groups=norm_num_groups,
+            norm_type=norm_type,
+            mid_block_add_attention=mid_block_add_attention,
         )
 
+    @apply_forward_hook
     def encode(self, x: torch.FloatTensor, return_dict: bool = True) -> VQEncoderOutput:
         h = self.encoder(x)
         h = self.quant_conv(h)
@@ -123,31 +136,43 @@ class VQModel(ModelMixin, ConfigMixin):
 
         return VQEncoderOutput(latents=h)
 
+    @apply_forward_hook
     def decode(
-        self, h: torch.FloatTensor, force_not_quantize: bool = False, return_dict: bool = True
+        self, h: torch.FloatTensor, force_not_quantize: bool = False, return_dict: bool = True, shape=None
     ) -> Union[DecoderOutput, torch.FloatTensor]:
         # also go through quantization layer
         if not force_not_quantize:
-            quant, emb_loss, info = self.quantize(h)
+            quant, _, _ = self.quantize(h)
+        elif self.config.lookup_from_codebook:
+            quant = self.quantize.get_codebook_entry(h, shape)
         else:
             quant = h
-        quant = self.post_quant_conv(quant)
-        dec = self.decoder(quant)
+        quant2 = self.post_quant_conv(quant)
+        dec = self.decoder(quant2, quant if self.config.norm_type == "spatial" else None)
 
         if not return_dict:
             return (dec,)
 
         return DecoderOutput(sample=dec)
 
-    def forward(self, sample: torch.FloatTensor, return_dict: bool = True) -> Union[DecoderOutput, torch.FloatTensor]:
+    def forward(
+        self, sample: torch.FloatTensor, return_dict: bool = True
+    ) -> Union[DecoderOutput, Tuple[torch.FloatTensor, ...]]:
         r"""
+        The [`VQModel`] forward method.
+
         Args:
             sample (`torch.FloatTensor`): Input sample.
             return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`DecoderOutput`] instead of a plain tuple.
+                Whether or not to return a [`models.vq_model.VQEncoderOutput`] instead of a plain tuple.
+
+        Returns:
+            [`~models.vq_model.VQEncoderOutput`] or `tuple`:
+                If return_dict is True, a [`~models.vq_model.VQEncoderOutput`] is returned, otherwise a plain `tuple`
+                is returned.
         """
-        x = sample
-        h = self.encode(x).latents
+
+        h = self.encode(sample).latents
         dec = self.decode(h).sample
 
         if not return_dict:

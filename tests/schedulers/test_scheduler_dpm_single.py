@@ -28,6 +28,9 @@ class DPMSolverSinglestepSchedulerTest(SchedulerCommonTest):
             "sample_max_value": 1.0,
             "algorithm_type": "dpmsolver++",
             "solver_type": "midpoint",
+            "lambda_min_clipped": -float("inf"),
+            "variance_type": None,
+            "final_sigmas_type": "sigma_min",
         }
 
         config.update(**kwargs)
@@ -56,6 +59,7 @@ class DPMSolverSinglestepSchedulerTest(SchedulerCommonTest):
 
             output, new_output = sample, sample
             for t in range(time_step, time_step + scheduler.config.solver_order + 1):
+                t = scheduler.timesteps[t]
                 output = scheduler.step(residual, t, output, **kwargs).prev_sample
                 new_output = new_scheduler.step(residual, t, new_output, **kwargs).prev_sample
 
@@ -113,6 +117,22 @@ class DPMSolverSinglestepSchedulerTest(SchedulerCommonTest):
             sample = scheduler.step(residual, t, sample).prev_sample
 
         return sample
+
+    def test_full_uneven_loop(self):
+        scheduler = DPMSolverSinglestepScheduler(**self.get_scheduler_config())
+        num_inference_steps = 50
+        model = self.dummy_model()
+        sample = self.dummy_sample_deter
+        scheduler.set_timesteps(num_inference_steps)
+
+        # make sure that the first t is uneven
+        for i, t in enumerate(scheduler.timesteps[3:]):
+            residual = model(sample, t)
+            sample = scheduler.step(residual, t, sample).prev_sample
+
+        result_mean = torch.mean(torch.abs(sample))
+
+        assert abs(result_mean.item() - 0.2574) < 1e-3
 
     def test_timesteps(self):
         for timesteps in [25, 50, 100, 999, 1000]:
@@ -179,6 +199,14 @@ class DPMSolverSinglestepSchedulerTest(SchedulerCommonTest):
         self.check_over_configs(lower_order_final=True)
         self.check_over_configs(lower_order_final=False)
 
+    def test_lambda_min_clipped(self):
+        self.check_over_configs(lambda_min_clipped=-float("inf"))
+        self.check_over_configs(lambda_min_clipped=-5.1)
+
+    def test_variance_type(self):
+        self.check_over_configs(variance_type=None)
+        self.check_over_configs(variance_type="learned_range")
+
     def test_inference_steps(self):
         for num_inference_steps in [1, 2, 3, 5, 10, 50, 100, 999, 1000]:
             self.check_over_forward(num_inference_steps=num_inference_steps, time_step=0)
@@ -189,11 +217,23 @@ class DPMSolverSinglestepSchedulerTest(SchedulerCommonTest):
 
         assert abs(result_mean.item() - 0.2791) < 1e-3
 
+    def test_full_loop_with_karras(self):
+        sample = self.full_loop(use_karras_sigmas=True)
+        result_mean = torch.mean(torch.abs(sample))
+
+        assert abs(result_mean.item() - 0.2248) < 1e-3
+
     def test_full_loop_with_v_prediction(self):
         sample = self.full_loop(prediction_type="v_prediction")
         result_mean = torch.mean(torch.abs(sample))
 
         assert abs(result_mean.item() - 0.1453) < 1e-3
+
+    def test_full_loop_with_karras_and_v_prediction(self):
+        sample = self.full_loop(prediction_type="v_prediction", use_karras_sigmas=True)
+        result_mean = torch.mean(torch.abs(sample))
+
+        assert abs(result_mean.item() - 0.0649) < 1e-3
 
     def test_fp16_support(self):
         scheduler_class = self.scheduler_classes[0]
@@ -210,3 +250,60 @@ class DPMSolverSinglestepSchedulerTest(SchedulerCommonTest):
             sample = scheduler.step(residual, t, sample).prev_sample
 
         assert sample.dtype == torch.float16
+
+    def test_step_shape(self):
+        kwargs = dict(self.forward_default_kwargs)
+
+        num_inference_steps = kwargs.pop("num_inference_steps", None)
+
+        for scheduler_class in self.scheduler_classes:
+            scheduler_config = self.get_scheduler_config()
+            scheduler = scheduler_class(**scheduler_config)
+
+            sample = self.dummy_sample
+            residual = 0.1 * sample
+
+            if num_inference_steps is not None and hasattr(scheduler, "set_timesteps"):
+                scheduler.set_timesteps(num_inference_steps)
+            elif num_inference_steps is not None and not hasattr(scheduler, "set_timesteps"):
+                kwargs["num_inference_steps"] = num_inference_steps
+
+            # copy over dummy past residuals (must be done after set_timesteps)
+            dummy_past_residuals = [residual + 0.2, residual + 0.15, residual + 0.10]
+            scheduler.model_outputs = dummy_past_residuals[: scheduler.config.solver_order]
+
+            time_step_0 = scheduler.timesteps[0]
+            time_step_1 = scheduler.timesteps[1]
+
+            output_0 = scheduler.step(residual, time_step_0, sample, **kwargs).prev_sample
+            output_1 = scheduler.step(residual, time_step_1, sample, **kwargs).prev_sample
+
+            self.assertEqual(output_0.shape, sample.shape)
+            self.assertEqual(output_0.shape, output_1.shape)
+
+    def test_full_loop_with_noise(self):
+        scheduler_class = self.scheduler_classes[0]
+        scheduler_config = self.get_scheduler_config()
+        scheduler = scheduler_class(**scheduler_config)
+
+        num_inference_steps = 10
+        t_start = 5
+
+        model = self.dummy_model()
+        sample = self.dummy_sample_deter
+        scheduler.set_timesteps(num_inference_steps)
+
+        # add noise
+        noise = self.dummy_noise_deter
+        timesteps = scheduler.timesteps[t_start * scheduler.order :]
+        sample = scheduler.add_noise(sample, noise, timesteps[:1])
+
+        for i, t in enumerate(timesteps):
+            residual = model(sample, t)
+            sample = scheduler.step(residual, t, sample).prev_sample
+
+        result_sum = torch.sum(torch.abs(sample))
+        result_mean = torch.mean(torch.abs(sample))
+
+        assert abs(result_sum.item() - 269.2187) < 1e-2, f" expected result sum  269.2187, but get {result_sum}"
+        assert abs(result_mean.item() - 0.3505) < 1e-3, f" expected result mean 0.3505, but get {result_mean}"
