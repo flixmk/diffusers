@@ -11,6 +11,9 @@ if is_torch_available():
     from .unet_motion_model import MotionAdapter, UNetMotionModel
     from .unet_spatio_temporal_condition import UNetSpatioTemporalConditionModel
     from .uvit_2d import UVit2DModel
+    
+    # custom
+    from .unet_perceiver_mid_block import UNet2DPerceiverConditionModel
 
 
 if is_flax_available():
