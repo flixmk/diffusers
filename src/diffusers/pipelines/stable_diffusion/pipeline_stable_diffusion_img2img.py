@@ -24,7 +24,7 @@ from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPV
 from ...configuration_utils import FrozenDict
 from ...image_processor import PipelineImageInput, VaeImageProcessor
 from ...loaders import FromSingleFileMixin, IPAdapterMixin, LoraLoaderMixin, TextualInversionLoaderMixin
-from ...models import AutoencoderKL, ImageProjection, UNet2DConditionModel
+from ...models import AutoencoderKL, ImageProjection, UNet2DConditionModel, UNet2DPerceiverConditionModel
 from ...models.attention_processor import FusedAttnProcessor2_0
 from ...models.lora import adjust_lora_scale_text_encoder
 from ...schedulers import KarrasDiffusionSchedulers
@@ -890,6 +890,9 @@ class StableDiffusionImg2ImgPipeline(
         clip_skip: int = None,
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+        optical_flow = None,
+        frame1 = None,
+        perceiver=None,
         **kwargs,
     ):
         r"""
@@ -1069,6 +1072,14 @@ class StableDiffusionImg2ImgPipeline(
                 guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
             ).to(device=device, dtype=latents.dtype)
 
+        # Prepare frame1_latents
+        frame1_latents = self.vae.encode(frame1).latent_dist.sample()
+        with torch.no_grad():
+            frame1_latents = frame1_latents * 0.18215
+
+        # overwrite unet
+        self.unet = UNet2DPerceiverConditionModel.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="unet").to(self.vae.device)
+        print("UNET TYPE: ", type(self.unet))
         # 8. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
@@ -1090,6 +1101,9 @@ class StableDiffusionImg2ImgPipeline(
                     cross_attention_kwargs=self.cross_attention_kwargs,
                     added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,
+                    perceiver=perceiver,
+                    optical_flow=optical_flow,
+                    frame1_latents=frame1_latents,
                 )[0]
 
                 # perform guidance

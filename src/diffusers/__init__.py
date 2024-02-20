@@ -97,6 +97,7 @@ else:
             "UNetSpatioTemporalConditionModel",
             "UVit2DModel",
             "VQModel",
+            "UNet2DPerceiverConditionModel"
         ]
     )
 
@@ -275,6 +276,7 @@ else:
             "StableDiffusionPanoramaPipeline",
             "StableDiffusionParadigmsPipeline",
             "StableDiffusionPipeline",
+            "StableDiffusionPerceiverPipeline",
             "StableDiffusionPipelineSafe",
             "StableDiffusionPix2PixZeroPipeline",
             "StableDiffusionSAGPipeline",
@@ -638,6 +640,7 @@ if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
             StableDiffusionPanoramaPipeline,
             StableDiffusionParadigmsPipeline,
             StableDiffusionPipeline,
+            StableDiffusionPerceiverPipeline,
             StableDiffusionPipelineSafe,
             StableDiffusionPix2PixZeroPipeline,
             StableDiffusionSAGPipeline,

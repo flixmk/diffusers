@@ -857,6 +857,7 @@ class UNet2DPerceiverConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoad
         return_dict: bool = True,
         perceiver = None,
         optical_flow=None,
+        frame1_latents=None,
     ) -> Union[UNet2DConditionOutput, Tuple]:
         r"""
         The [`UNet2DConditionModel`] forward method.
@@ -1186,9 +1187,10 @@ class UNet2DPerceiverConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoad
             res_samples = tmp[-len(upsample_block.resnets) :]
             tmp = tmp[: -len(upsample_block.resnets)]
             aggregate_res_samples.append(res_samples[-1])
-        aggregate_res_samples.append(optical_flow)
-        per_outputs = perceiver(aggregate_res_samples)
-        per_outputs = perceiver.postprocess(per_outputs)
+        # aggregate_res_samples.append(optical_flow)
+        # aggregate_res_samples.append(frame1_latents)
+        # per_outputs = perceiver(aggregate_res_samples)
+        # per_outputs = perceiver.postprocess(per_outputs)
 
         # 5. up
         for i, upsample_block in enumerate(self.up_blocks):
@@ -1197,8 +1199,11 @@ class UNet2DPerceiverConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoad
             res_samples = down_block_res_samples[-len(upsample_block.resnets) :]
             # print("ResampleUp: ", res_samples[-1].shape)
             down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
+            # res_samples = list(res_samples)
+            # res_samples[-1] = per_outputs[i]
+            # res_samples = tuple(res_samples)
             res_samples = list(res_samples)
-            res_samples[-1] = per_outputs[i]
+            res_samples[-1] = aggregate_res_samples[i]
             res_samples = tuple(res_samples)
             if not is_final_block and forward_upsample_size:
                 upsample_size = down_block_res_samples[-1].shape[2:]

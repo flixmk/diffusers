@@ -49,6 +49,7 @@ if is_torch_available():
     _import_structure["unets.unet_spatio_temporal_condition"] = ["UNetSpatioTemporalConditionModel"]
     _import_structure["unets.uvit_2d"] = ["UVit2DModel"]
     _import_structure["vq_model"] = ["VQModel"]
+    _import_structure["unets.unet_perceiver_mid_block"] = ["UNet2DPerceiverConditionModel"]
 
 if is_flax_available():
     _import_structure["controlnet_flax"] = ["FlaxControlNetModel"]
